@@ -1,0 +1,146 @@
+---
+title: "Course Project Machine Learning"
+output: html_document
+---
+
+#Qualitative Activity Recognition of Weight Lifting Exercises
+
+##Background 
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways:  
+
+Class A: exactly according to the specification  
+Class B: throwing the elbows to the front  
+Class C: lifting the dumbbell only halfway  
+Class D: lowering the dumbbell only halfway  
+Class E: throwing the hips to the front  
+More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+##Goal
+
+The goal of this project of the Coursera Practical Machine Learning course is to predict the manner in which people did the exercise. This is the "classe" variable in the training set.
+
+##Report
+
+This report describes:  
+* how this model is built;  
+* how cross validation is used;  
+* what the expected out of sample error is;  
+* justification of the made choices;  
+* Results of prediction model predicting 20 different test cases.  
+
+##Setting the Stage
+
+First, we need to load the required libraries
+
+```{r,echo=TRUE,warning=FALSE}
+library(readr) #reading in excel
+library(caret) #machine learning
+library(dplyr) #data munging
+library(ggplot2) #graphing
+library(parallel) #parallel processing
+library(doParallel) #parallel processing
+```
+
+Next, load the data
+```{r,echo=TRUE,cache=TRUE}
+# read training and testing data for coursera course. 
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+valUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl), header=TRUE, sep=",", na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(valUrl), header=TRUE, sep=",", na.strings=c("NA",""))
+```
+
+##Cleaning and pre-processing the data
+
+Before we begin analyzing, we first check to see which variables to include in the models. There are many ways to do this, and with a lack of clear documentation of what all the variables are in this dataset, we will err on the side of over-inclusion. We will retain all numerical variables except for those with a large amount of missing data.
+
+###Missing data
+
+```{r,echo=TRUE}
+
+#percent missing data by variable
+missing<-apply(testing,2,function(x) sum(is.na(x))/length(x))
+missing
+```
+
+We will include all with 100% data complete, excluding those variables up front with non-numeric data. We'll keep the num_window variable in case there is some kind of order effect, as it appears to be tracking the sequential time period.
+
+```{r,echo=TRUE}
+#variables with no data missing
+keep<-missing[missing==0]
+keep_names<-names(keep)
+
+#subset both training and test data sets
+training_c<-training[,names(training) %in% c(keep_names,"classe")]
+testing_c<-testing[,names(testing) %in% keep_names]
+
+#let's also get rid of the character variables up front. We'll keep the num_window variable in case there is some kind of order effect
+training_c<-training_c[,-c(1:6)]
+testing_c<-testing_c[,-c(1:6)]
+```
+
+We could look at variables now to see whether there are collinearity issues, but let's see how well we do right off the bat and revisit if necessary. We need to split the training set into two sets so we can do cross-validation before running on our final test set.
+
+```{r,echo=TRUE}
+set.seed(1234)
+inTrain<-createDataPartition(training_c$classe, p = 3/4)[[1]]
+train<-training_c[inTrain,]
+test<-training_c[-inTrain,]
+```
+
+##Training the model: random forest
+
+We learned in the course that random forest is a popular algorithm and is frequently used in winning Kaggle submissions. So let's use that here. Only issue is that it can be very memory intensive and take a long time to run. Therefore, we will set up parallel processing to speed things up. We will also use trainControl to make things run faster.
+
+**Set up cluster for procuessing**
+```{r,echo=TRUE,eval=FALSE}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+**Setting trainControl**
+```{r,echo=TRUE}
+set.seed(1234)
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+```
+
+**Running the model**
+```{r,echo=TRUE,cache=TRUE}
+set.seed(1234)
+mod1<-train(train$classe~.,data=train,method="rf", trControl=fitControl)
+
+#stopCluster(cluster) #stop parallel processing
+```
+
+##Checking out of sample error
+Let's check out of bag error to see how well this model is doing.
+```{r,echo=TRUE}
+out<-mod1$finalModel
+oob<-mean(out$err.rate[,1])
+oob
+```
+
+OOB rate is .28%, which is pretty darn good. We're going to forget trying to look at collinearity/other ways to make the model better and just move ahead on the cross validation set.
+
+##Accuracy with the validation set
+
+```{r,echo=TRUE}
+result<-predict(mod1,newdata=test)
+confusionMatrix(result,test$classe) 
+```
+
+This looks pretty darn good too-- 99.94% accuracy. I think we're ready to go ahead and run our predictions on the test data.
+
+##Test set predictions
+
+The predictions are below, and now we have to go put these in the quiz to determine how well we did....manually. Turns out these predictions are spot on!
+
+```{r,echo=TRUE}
+predictions<-predict(mod1,testing_c)
+data.frame(case=c(1:20),guess=predictions)
+```
